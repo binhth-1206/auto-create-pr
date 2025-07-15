@@ -79,7 +79,7 @@ jobs:
           head: ${{ github.ref_name }}
           pr_template_file: .github/PULL_REQUEST_TEMPLATE.md
           is_draft: yes
-          labels: '["auto-pr", "staging"]'
+          labels: '["auto-pr", "Staging"]'
           prettify_title: yes
 
   create-pr-master:
@@ -103,5 +103,5 @@ jobs:
           head: ${{ github.ref_name }}
           pr_template_file: .github/PULL_REQUEST_TEMPLATE.md
           is_draft: yes
-          labels: '["auto-pr", "master"]'
+          labels: '["auto-pr", "Master"]'
           prettify_title: yes

@@ -1,0 +1,140 @@
+name: "Create PR"
+description: "Create a pull request"
+
+inputs:
+  base:
+    required: true
+    description: "Name of base branch"
+  head:
+    required: true
+    description: "Name of head branch"
+  pr_template_file:
+    required: false
+    description: "Path to pull request template, e.g. .github/PULL_REQUEST_TEMPLATE.md"
+  is_draft:
+    required: false
+    description: "Create a draft pull request, value yes or no"
+    default: "yes"
+  labels:
+    required: false
+    description: "List of PR labels"
+  prettify_title:
+    required: false
+    default: "no"
+    description: "Should prettify pr title, value yes or no. Default no, means that PR title = head branch name"
+
+runs:
+  using: composite
+
+  steps:
+    - name: Check if PR existed
+      uses: actions/github-script@v6
+      env:
+        HEAD_BRANCH: ${{ inputs.head }}
+        BASE_BRANCH: ${{ inputs.base }}
+      with:
+        github-token: ${{ env.GITHUB_TOKEN }}
+        retries: 3
+        script: |
+          const { HEAD_BRANCH, BASE_BRANCH } = process.env
+
+          const result = await github.rest.pulls.list({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            state: 'open',
+            base: BASE_BRANCH,
+            head: `${context.repo.owner}:${HEAD_BRANCH}`,
+            per_page: 1,
+          });
+
+          if (core.isDebug()) {
+            console.log('List pr result', result);
+          }
+
+          if (result.data.length) {
+            core.exportVariable('IS_PR_EXISTED', 'true');
+            core.error('PR existed: ' + result.data[0].html_url);
+          } else {
+            core.exportVariable('IS_PR_EXISTED', 'false');
+          }
+
+    - name: Prepare for new PR
+      if: ${{ env.IS_PR_EXISTED == 'false' }}
+      uses: actions/github-script@v6
+      env:
+        HEAD_BRANCH: ${{ inputs.head }}
+        PRETTIFY_TITLE: ${{ inputs.prettify_title }}
+        AUTHOR: ${{ github.event.sender.login }}
+        ACTION_RUN_ID: ${{ github.run_id }}
+        ACTION_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        PR_TEMPLATE_FILE: ${{ inputs.pr_template_file }}
+      with:
+        github-token: ${{ env.GITHUB_TOKEN }}
+        script: |
+          const { HEAD_BRANCH, PRETTIFY_TITLE, AUTHOR, ACTION_RUN_ID, ACTION_RUN_URL, PR_TEMPLATE_FILE } = process.env;
+          const fs = require('fs').promises;
+
+          let prTitle = HEAD_BRANCH;
+          if (PRETTIFY_TITLE) {
+            if (prTitle.startsWith('feature.bugfix.')) {
+              prTitle = prTitle.replace('feature.bugfix.', 'fix: ');
+            } else if (prTitle.startsWith('feature.refactoring.')) {
+              prTitle = prTitle.replace('feature.refactoring.', 'refactoring: ');
+            } else if (prTitle.startsWith('feature.revamp.')) {
+              prTitle = prTitle.replace('feature.revamp.', 'revamp: ');
+            } else {
+              prTitle = prTitle.replace(/^feature\..+\./, 'feat: ')
+            }
+
+            prTitle = prTitle.replace(/[_.]/g, ' ');
+          }
+
+          core.exportVariable('NEW_PR_TITLE', prTitle);
+
+          let prBody = `> :seedling: Created by [Github Action](${ACTION_RUN_URL}) on demand of @${AUTHOR}\n`;
+          if (PR_TEMPLATE_FILE) {
+            prBody += await fs.readFile(PR_TEMPLATE_FILE);
+          }
+
+          core.exportVariable('NEW_PR_BODY', prBody);
+
+    - name: Create PR
+      if: ${{ env.IS_PR_EXISTED == 'false' }}
+      uses: actions/github-script@v6
+      env:
+        HEAD_BRANCH: ${{ inputs.head }}
+        BASE_BRANCH: ${{ inputs.base }}
+        IS_DRAFT: ${{ inputs.is_draft }}
+        LABELS: ${{ inputs.labels }}
+      with:
+        github-token: ${{ env.GITHUB_TOKEN }}
+        retries: 3
+        script: |
+          const { HEAD_BRANCH, BASE_BRANCH, IS_DRAFT, LABELS, NEW_PR_TITLE, NEW_PR_BODY } = process.env;
+
+          const result = await github.rest.pulls.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            draft: IS_DRAFT == 'yes',
+            base: BASE_BRANCH,
+            head: HEAD_BRANCH,
+            title: NEW_PR_TITLE,
+            body: NEW_PR_BODY,
+          });
+
+          if (core.isDebug()) {
+            console.log('Create pr result', result);
+          }
+
+          const prNumber = result.data.number;
+
+          if (LABELS) {
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              labels: JSON.parse(LABELS)
+            });
+          }
+
+          core.notice('New PR created: ' + result.data.html_url);
